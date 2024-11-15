@@ -1,343 +1,337 @@
-{\rtf1\ansi\ansicpg1252\cocoartf2706
-\cocoatextscaling0\cocoaplatform0{\fonttbl\f0\fswiss\fcharset0 Helvetica;}
-{\colortbl;\red255\green255\blue255;}
-{\*\expandedcolortbl;;}
-\paperw11900\paperh16840\margl1440\margr1440\vieww11520\viewh8400\viewkind0
-\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\pardirnatural\partightenfactor0
+# For this project, we incorporated the idea of data warehousing and star schema
+# ,and created dimensions and facts tables to extract and load hospital data to
+# make analysis 
+# MySQL connection
+SET FOREIGN_KEY_CHECKS=0;
+SET SQL_SAFE_UPDATES = 0;
+SET net_read_timeout = 6000;
 
-\f0\fs24 \cf0 # For this project, we incorporated the idea of data warehousing and star schema\
-# ,and created dimensions and facts tables to extract and load hospital data to\
-# make analysis \
-# MySQL connection\
-SET FOREIGN_KEY_CHECKS=0;\
-SET SQL_SAFE_UPDATES = 0;\
-SET net_read_timeout = 6000;\
-\
-USE HospitalsQueries;\
-Use Hospitals10;\
-\
-# Load data into dimension tables\
-\
-# Load data into PatientDimention table\
-DESC Hospitals10.PatientDimension;\
-\
-INSERT INTO Hospitals10.PatientDimension\
-SELECT * FROM Patients;\
-\
-SELECT * FROM Hospitals10.PatientDimension;\
-\
-# Load data into HospitalDimention table\
-DESC Hospitals10.HospitalDimension;\
-\
-INSERT INTO Hospitals10.HospitalDimension\
-SELECT * FROM Hospitals;\
-\
-SELECT * FROM Hospitals10.HospitalDimension;\
-\
-# Load data into SpecialtyDimention table\
-DESC Hospitals10.SpecialtyDimension;\
-\
-INSERT INTO Hospitals10.SpecialtyDimension\
-SELECT * FROM Specialties;\
-\
-SELECT * FROM Hospitals10.SpecialtyDimension;\
-\
-# Load data into IllnessDimension table\
-DESC Hospitals10.IllnessDimension;\
-\
-INSERT INTO Hospitals10.IllnessDimension\
-SELECT * FROM Illnesses;\
-\
-SELECT * FROM Hospitals10.IllnessDimension;\
-\
-# Load data into InsuranceDimension table\
-DESC Hospitals10.InsuranceDimension;\
-\
-INSERT INTO Hospitals10.InsuranceDimension\
-SELECT PolicyNo, Type, InNetworkCoPay, OutOfNetworkCoPay, MaximumLifetimeSpend\
-FROM InsurancePolicies;\
-\
-SELECT * FROM Hospitals10.InsuranceDimension;\
-\
-# Load data into fact tables\
-\
-# Load data into PatientHospitalSpecialtyFact table\
-DESC Hospitals10.PatientHospitalSpecialtyFact;\
-\
-INSERT INTO Hospitals10.PatientHospitalSpecialtyFact\
-SELECT d.Hospital_Id, p.Patient_Id, s.Specialty_Id,\
-a.Appt_Date as AppointmentDate, SUM(a.AdministrationCharge+a.DoctorCharge+a.OtherCharge) as HospitalRevenue,\
-SUM(d.HourlyWage) as HospitalCosts, SUM(s.Target_Per_Hour_Rate) as EmergencyCosts,\
-p.Risk as PatientCondition, i.Amount_Paid as PatientsPayment\
-FROM ((((Invoices as i INNER JOIN Patients as p on i.Patient_Id=p.Patient_Id) INNER JOIN\
-Appointments as a ON a.Patient_Id=p.Patient_Id) INNER JOIN\
-Doctors as d ON a.Doctor_Id=d.Doctor_Id) INNER JOIN \
-Doctors_Specialties as o ON d.Doctor_Id=o.Doctor_Id) INNER JOIN\
-Specialties as s ON o.Specialty_Id=s.Specialty_Id\
-GROUP BY 1,2,3;\
-\
-\
-SELECT * FROM Hospitals10.PatientHospitalSpecialtyFact;\
-\
-# Load data into PatientIllnessFact table\
-DESC Hospitals10.PatientIllnessFact;\
-\
-INSERT INTO Hospitals10.PatientIllnessFact\
-SELECT p.Patient_Id, b.Illness_Id, \
-a.Appt_Date as Appointment_Date, sum(d.HourlyWage) as IllnessCosts\
-FROM (((Patients as p INNER JOIN Illnesses_Patients as c on p.Patient_Id=c.Patient_Id) INNER JOIN\
-Illnesses as b ON b.Illness_Id=c.Illness_Id) INNER JOIN\
-Appointments as a ON a.Patient_Id=p.Patient_Id) INNER JOIN\
-Doctors as d ON a.Doctor_Id=d.Doctor_Id\
-GROUP BY 1, 2;\
-\
-SELECT * FROM Hospitals10.PatientIllnessFact;\
-\
-# Load data into PatientHospitalInsuranceFact table\
-DESC Hospitals10.PatientHospitalInsuranceFact;\
-\
-INSERT INTO Hospitals10.PatientHospitalInsuranceFact\
-SELECT p.Patient_Id, d.Hospital_Id, \
-i.PolicyNo, i.Type as TypeOfInsurance, \
-a.Appt_Date as AppointmentDate\
-FROM ((InsurancePolicies as i INNER JOIN Patients as p on i.PatientID=p.Patient_Id) INNER JOIN\
-Appointments as a ON a.Patient_Id=p.Patient_Id) INNER JOIN\
-Doctors as d ON a.Doctor_Id=d.Doctor_Id\
-GROUP BY 1, 2, 3;\
-\
-SELECT * FROM Hospitals10.PatientHospitalInsuranceFact;\
-\
-\
-\
-Use Hospitals10;\
-\
--- #1\
--- Costs associated with patients seen in the hospital vs. emergency room by month, qtr,\
--- year over year to identify trends.\
-\
--- Emergency Costs\
-SELECT EmergencyCosts, Specialty_Id, YEAR(AppointmentDate) as YEAR, \
-MONTH(AppointmentDate) as MONTH, QUARTER(AppointmentDate) as QUARTER\
-FROM PatientHospitalSpecialtyFact\
-WHERE Specialty_Id=6\
-GROUP BY YEAR(AppointmentDate), MONTH(AppointmentDate), QUARTER(AppointmentDate);\
-\
--- Hospital Costs\
-SELECT HospitalsCosts, Specialty_Id, YEAR(AppointmentDate) as YEAR, \
-MONTH(AppointmentDate) as MONTH, QUARTER(AppointmentDate) as QUARTER\
-FROM PatientHospitalSpecialtyFact\
-WHERE Specialty_Id!=6\
-GROUP BY YEAR(AppointmentDate), MONTH(AppointmentDate), QUARTER(AppointmentDate);\
-\
--- #2\
--- Cost per Illness trended over time and compared to prior periods\
-\
--- View #1\
-\
-DROP VIEW IF EXISTS Cost_Per_Illness;\
-CREATE VIEW Cost_Per_Illness AS\
-SELECT Illness_Id, IllnessCosts, YEAR(Appointment_Date) as YEAR, \
-MONTH(Appointment_Date) as MONTH, QUARTER(Appointment_Date) as QUARTER\
-FROM PatientIllnessFact\
-GROUP BY Illness_Id, YEAR(Appointment_Date), MONTH(Appointment_Date), \
-QUARTER(Appointment_Date);\
-\
-SELECT * FROM Cost_Per_Illness;\
-\
--- Assume that cost per illness is equal to hourly wages\
-\
-\
--- #3\
--- Total Revenue per facility by month, qtr., and years and trending over time\
-\
--- View #2\
-\
-DROP VIEW IF EXISTS Total_Revenue_PerFacility;\
-CREATE VIEW Total_Revenue_PerFacility\
-AS SELECT Hospital_Id, HospitalsRevenue, YEAR(AppointmentDate) as YEAR, \
-MONTH(AppointmentDate) as MONTH, QUARTER(AppointmentDate) as QUARTER\
-FROM PatientHospitalSpecialtyFact\
-GROUP BY Hospital_Id;\
-\
-SELECT * FROM Total_Revenue_PerFacility;\
-\
--- Assume that revenue is equal to AdministrativeCharges+OtherCharges+DoctorCharges\
-\
-\
--- #4\
--- Compare payment between facilities by patient condition\
-\
--- View #3\
--- Index #1\
-\
-DROP VIEW IF EXISTS Payment_by_Patient_Condition;\
-CREATE INDEX index_patient_condition\
-ON PatientHospitalSpecialtyFact(PatientCondition);\
-\
-CREATE VIEW Payment_by_Patient_Condition AS \
-SELECT Hospital_Id, PatientsPayment, PatientCondition\
-FROM PatientHospitalSpecialtyFact\
-GROUP BY Hospital_Id, Patient_Id;\
-\
-SELECT * FROM Payment_by_Patient_Condition;\
-\
--- Assume that patient condition is risk level\
-\
--- #5\
--- The Avg number of visits to a hospital per patient per year, qtr, and month\
--- and year over year comparison by a facility of similar size\
-\
--- All hospitals\
-SELECT DISTINCT count(*) Appointment_Date FROM PatientHospitalInsuranceFact\
-WHERE Year(Appointment_Date) like '%2010%';\
--- Repeat this query above 4 times for each year\
--- 12,131 appointments total in 2010\
--- 12,248 appointments total in 2011\
--- 12,121 appointments total in 2012\
--- 12,197 appointments total in 2013\
--- = 48,697 Total Appointments from 2010-2013\
--- = 215 Hospitals Total\
-\
--- On Average, there were about 226.50 Visits Per Hospital Per Year (46,697/215)\
--- 12,131/215 = on average 56.42 appointments per hospital in 2010\
--- 12,248/215 = on average 56.96 appointments per hospital in 2011\
--- 12,121/215 = on average 56.38 appointments per hospital in 2012\
--- 12,197/215 = on average 56.73 appointments per hospital in 2013\
-\
--- Hospital #1 for comparison\
-SELECT DISTINCT count(*) Appointment_Date FROM PatientHospitalInsuranceFact\
-WHERE Year(Appointment_Date) like '%2010%' and Hospital_Id='H866008170';\
--- Repeat this query above 4 times for each year\
--- 50 Appointments(Patients) Total In 2010 for Hospital H866008170\
--- 47 Appointments(Patients) Total In 2011 for Hospital H866008170\
--- 69 Appointments(Patients) Total In 2012 for Hospital H866008170\
--- 62 Appointments(Patients) Total In 2013 for Hospital H866008170\
-\
--- 56.42/50= 1.13 which is the average number of visits per patient per year for 2010\
--- 56.96/47= 1.21 which is the average number of visits per patient per year for 2011\
--- 56.38/69= 0.82 which is the average number of visits per patient per year for 2012\
--- 56.73/62= 0.92 which is the average number of visits per patient per year for 2013\
-SELECT Patient_Id, Hospital_Id, YEAR(AppointmentDate) as Year, 1.13 as AvgVisitsYearly,\
- COUNT(AppointmentDate)/12 AS AvgVisitsMonthly, COUNT(AppointmentDate)/4 AS AvgVisitsQuarterly\
-FROM PatientHospitalSpecialtyFact\
-WHERE Hospital_Id='H866008170' and AppointmentDate like '%2011%'\
-GROUP BY YEAR(AppointmentDate), Patient_Id;\
--- Repeat this query above 4 times for each year\
-\
-\
--- Hospital #2 for comparison\
-SELECT DISTINCT count(*) Appointment_Date FROM PatientHospitalInsuranceFact\
-WHERE Year(Appointment_Date) like '%2010%' and Hospital_Id='H866008122';\
--- Repeat this query above 4 times for each year\
--- 64 Appointments(Patients) Total in 2010 for Hospital H866008122\
--- 53 Appointments(Patients) Total in 2011 for Hospital H866008122\
--- 59 Appointments(Patients) Total in 2012 for Hospital H866008122\
--- 40 Appointments(Patients) Total in 2011 for Hospital H866008122\
-\
--- 56.42/64= 0.88 which is the average number of visits per patient per year for 2010\
--- 56.96/53= 1.08 which is the average number of visits per patient per year for 2011\
--- 56.38/59= 0.95 which is the average number of visits per patient per year for 2012\
--- 56.73/40= 1.42 which is the average number of visits per patient per year for 2013\
-\
-\
-SELECT  Patient_Id, Hospital_Id, YEAR(AppointmentDate) as Year, 0.88 as AvgVisitsYearly, COUNT(AppointmentDate)/12 \
-AS AvgVisitsMonthly, COUNT(AppointmentDate)/4 AS AvgVisitsQuarterly\
-FROM PatientHospitalSpecialtyFact\
-WHERE Hospital_Id='H866008122' and AppointmentDate like '%2011%'\
-GROUP BY YEAR(AppointmentDate), Patient_Id;\
--- Repeat this wquery above 4 times for each year\
-\
--- #6\
--- Total Revenue by a facility with by month, quarter and year comparison of the \
--- current month to the prior year same month\
-\
-\
-SELECT DISTINCT(Hospital_Id), HospitalsRevenue, YEAR(AppointmentDate) AS YEAR, MONTH(AppointmentDate) as MONTH, \
-QUARTER(AppointmentDate) as QUARTER\
-FROM PatientHospitalSpecialtyFact;\
-\
-\
--- #7\
--- The number of times patients have been readmitted and the avg number of readmissions\
--- per facility\
-\
--- The number of times patients have been readmitted\
-Select Patient_Id, COUNT(Appointment_Date)-1 as Number_of_Readmissions\
-FROM PatientHospitalInsuranceFact\
-GROUP BY Patient_Id;\
-\
--- This is assuming that the next appointment after having one appointment is a \
--- readmission. So if a patient has 25 total appointments, they have been readmitted 24 times.\
-\
--- The average number of readmissions per facility\
-Select Hospital_Id, COUNT(Appointment_Date)-1 as Number_of_Readmissions_PerHospital\
-FROM PatientHospitalInsuranceFact\
-GROUP BY Hospital_Id;\
--- In total, across all hospitals, there are 48,482 readmissions \
--- (I exported the output from the above query and summed the count of readmissions for all hospitals)\
--- In total, there are 215 hospitals\
-SELECT 48482/count(Hospital_Id) as Average_Number_of_Readmissions_PerFacility\
-FROM HospitalDimension;\
-\
--- #8\
--- Admissions per facility by month, qtr, and years and trending over time\
-\
-SELECT Hospital_Id, COUNT(AppointmentDate) as Number_of_Admissions, YEAR(AppointmentDate) as \
-Year, MONTH(AppointmentDate) as Month, QUARTER(AppointmentDate) as Quarter\
-FROM PatientHospitalSpecialtyFact\
-GROUP BY Hospital_Id;\
-\
-\
--- #9\
--- Avg number of illnesses per patient by month, quarter, and year\
-CREATE INDEX index_date\
-ON PatientIllnessFact(Appointment_Date);\
-\
-SELECT Patient_Id, YEAR(Appointment_Date) as Year, COUNT(Patient_Id) as YearlyTotal, \
-COUNT(Illness_Id)/12 as AvgMonthly, COUNT(Illness_Id)/4 as AvgQuarter\
-FROM PatientIllnessFact\
-WHERE Year(Appointment_Date) like '%2010%'\
-GROUP BY 1;\
-\
--- #10\
--- Identify which patients are seen by the type of insurance at a hospital, and compare\
--- how it has changed over time\
-\
-CREATE INDEX index_insurance_type\
-ON PatientHospitalInsuranceFact(TypeofInsurance);\
-SELECT  Hospital_Id, TypeofInsurance, Patient_Id,  Year(Appointment_Date) as Year\
-FROM PatientHospitalInsuranceFact\
-GROUP BY YEAR(Appointment_Date), Patient_Id;\
-\
-\
--- #11\
--- Identify which patients are most likely in need of an appointment based on any patient\
--- that has not had an appointment within the last 12-month period\
-\
-Select a.Patient_Id, a.Hospital_Id, b.Name,\
-CASE WHEN DATEDIFF('2014-06-01', a.AppointmentDate) < 365 THEN 'No' ELSE 'Yes' END AS 'PatientNeedsAppointment'  \
-FROM PatientHospitalSpecialtyFact as a INNER JOIN HospitalDimension as b ON a.Hospital_Id=b.Hospital_Id;\
-\
--- We assume that 06/01/2014 starts the last 12 month period\
-\
-\
--- #12\
--- Define the average length of time in days between the day a patient makes an appt\
--- and when the patient is seen for a new patient physical, routine exam, or return\
--- visit exam\
-\
-SELECT a.Patient_Id, a.Hospital_Id, a.Appointment_Date, (SELECT MIN(Appointment_Date) \
-FROM PatientHospitalInsuranceFact AS c WHERE c.Appointment_Date > a.Appointment_Date\
-AND c.Patient_Id=a.Patient_Id AND c.Hospital_Id!=a.Hospital_Id) as PatientsNextAppointment, \
-DATEDIFF((SELECT MIN(Appointment_Date) FROM PatientHospitalInsuranceFact \
-AS c WHERE c.Appointment_Date > a.Appointment_Date\
-AND c.Patient_Id=a.Patient_Id AND c.Hospital_Id!=a.Hospital_Id), Appointment_Date) \
-AS DifferenceinDays FROM PatientHospitalInsuranceFact AS a\
-GROUP BY Patient_Id, 3;\
--- The average length of time between the day a patient makes \
--- an appointment and when the patients returns for their next appointment is 63.86 Days for all patients in all hospitals \
-\
-\
-\
-\
-}
+USE HospitalsQueries;
+Use Hospitals10;
+
+# Load data into dimension tables
+
+# Load data into PatientDimention table
+DESC Hospitals10.PatientDimension;
+
+INSERT INTO Hospitals10.PatientDimension
+SELECT * FROM Patients;
+
+SELECT * FROM Hospitals10.PatientDimension;
+
+# Load data into HospitalDimention table
+DESC Hospitals10.HospitalDimension;
+
+INSERT INTO Hospitals10.HospitalDimension
+SELECT * FROM Hospitals;
+
+SELECT * FROM Hospitals10.HospitalDimension;
+
+# Load data into SpecialtyDimention table
+DESC Hospitals10.SpecialtyDimension;
+
+INSERT INTO Hospitals10.SpecialtyDimension
+SELECT * FROM Specialties;
+
+SELECT * FROM Hospitals10.SpecialtyDimension;
+
+# Load data into IllnessDimension table
+DESC Hospitals10.IllnessDimension;
+
+INSERT INTO Hospitals10.IllnessDimension
+SELECT * FROM Illnesses;
+
+SELECT * FROM Hospitals10.IllnessDimension;
+
+# Load data into InsuranceDimension table
+DESC Hospitals10.InsuranceDimension;
+
+INSERT INTO Hospitals10.InsuranceDimension
+SELECT PolicyNo, Type, InNetworkCoPay, OutOfNetworkCoPay, MaximumLifetimeSpend
+FROM InsurancePolicies;
+
+SELECT * FROM Hospitals10.InsuranceDimension;
+
+# Load data into fact tables
+
+# Load data into PatientHospitalSpecialtyFact table
+DESC Hospitals10.PatientHospitalSpecialtyFact;
+
+INSERT INTO Hospitals10.PatientHospitalSpecialtyFact
+SELECT d.Hospital_Id, p.Patient_Id, s.Specialty_Id,
+a.Appt_Date as AppointmentDate, SUM(a.AdministrationCharge+a.DoctorCharge+a.OtherCharge) as HospitalRevenue,
+SUM(d.HourlyWage) as HospitalCosts, SUM(s.Target_Per_Hour_Rate) as EmergencyCosts,
+p.Risk as PatientCondition, i.Amount_Paid as PatientsPayment
+FROM ((((Invoices as i INNER JOIN Patients as p on i.Patient_Id=p.Patient_Id) INNER JOIN
+Appointments as a ON a.Patient_Id=p.Patient_Id) INNER JOIN
+Doctors as d ON a.Doctor_Id=d.Doctor_Id) INNER JOIN 
+Doctors_Specialties as o ON d.Doctor_Id=o.Doctor_Id) INNER JOIN
+Specialties as s ON o.Specialty_Id=s.Specialty_Id
+GROUP BY 1,2,3;
+
+
+SELECT * FROM Hospitals10.PatientHospitalSpecialtyFact;
+
+# Load data into PatientIllnessFact table
+DESC Hospitals10.PatientIllnessFact;
+
+INSERT INTO Hospitals10.PatientIllnessFact
+SELECT p.Patient_Id, b.Illness_Id, 
+a.Appt_Date as Appointment_Date, sum(d.HourlyWage) as IllnessCosts
+FROM (((Patients as p INNER JOIN Illnesses_Patients as c on p.Patient_Id=c.Patient_Id) INNER JOIN
+Illnesses as b ON b.Illness_Id=c.Illness_Id) INNER JOIN
+Appointments as a ON a.Patient_Id=p.Patient_Id) INNER JOIN
+Doctors as d ON a.Doctor_Id=d.Doctor_Id
+GROUP BY 1, 2;
+
+SELECT * FROM Hospitals10.PatientIllnessFact;
+
+# Load data into PatientHospitalInsuranceFact table
+DESC Hospitals10.PatientHospitalInsuranceFact;
+
+INSERT INTO Hospitals10.PatientHospitalInsuranceFact
+SELECT p.Patient_Id, d.Hospital_Id, 
+i.PolicyNo, i.Type as TypeOfInsurance, 
+a.Appt_Date as AppointmentDate
+FROM ((InsurancePolicies as i INNER JOIN Patients as p on i.PatientID=p.Patient_Id) INNER JOIN
+Appointments as a ON a.Patient_Id=p.Patient_Id) INNER JOIN
+Doctors as d ON a.Doctor_Id=d.Doctor_Id
+GROUP BY 1, 2, 3;
+
+SELECT * FROM Hospitals10.PatientHospitalInsuranceFact;
+
+
+
+Use Hospitals10;
+
+-- #1
+-- Costs associated with patients seen in the hospital vs. emergency room by month, qtr,
+-- year over year to identify trends.
+
+-- Emergency Costs
+SELECT EmergencyCosts, Specialty_Id, YEAR(AppointmentDate) as YEAR, 
+MONTH(AppointmentDate) as MONTH, QUARTER(AppointmentDate) as QUARTER
+FROM PatientHospitalSpecialtyFact
+WHERE Specialty_Id=6
+GROUP BY YEAR(AppointmentDate), MONTH(AppointmentDate), QUARTER(AppointmentDate);
+
+-- Hospital Costs
+SELECT HospitalsCosts, Specialty_Id, YEAR(AppointmentDate) as YEAR, 
+MONTH(AppointmentDate) as MONTH, QUARTER(AppointmentDate) as QUARTER
+FROM PatientHospitalSpecialtyFact
+WHERE Specialty_Id!=6
+GROUP BY YEAR(AppointmentDate), MONTH(AppointmentDate), QUARTER(AppointmentDate);
+
+-- #2
+-- Cost per Illness trended over time and compared to prior periods
+
+-- View #1
+
+DROP VIEW IF EXISTS Cost_Per_Illness;
+CREATE VIEW Cost_Per_Illness AS
+SELECT Illness_Id, IllnessCosts, YEAR(Appointment_Date) as YEAR, 
+MONTH(Appointment_Date) as MONTH, QUARTER(Appointment_Date) as QUARTER
+FROM PatientIllnessFact
+GROUP BY Illness_Id, YEAR(Appointment_Date), MONTH(Appointment_Date), 
+QUARTER(Appointment_Date);
+
+SELECT * FROM Cost_Per_Illness;
+
+-- Assume that cost per illness is equal to hourly wages
+
+
+-- #3
+-- Total Revenue per facility by month, qtr., and years and trending over time
+
+-- View #2
+
+DROP VIEW IF EXISTS Total_Revenue_PerFacility;
+CREATE VIEW Total_Revenue_PerFacility
+AS SELECT Hospital_Id, HospitalsRevenue, YEAR(AppointmentDate) as YEAR, 
+MONTH(AppointmentDate) as MONTH, QUARTER(AppointmentDate) as QUARTER
+FROM PatientHospitalSpecialtyFact
+GROUP BY Hospital_Id;
+
+SELECT * FROM Total_Revenue_PerFacility;
+
+-- Assume that revenue is equal to AdministrativeCharges+OtherCharges+DoctorCharges
+
+
+-- #4
+-- Compare payment between facilities by patient condition
+
+-- View #3
+-- Index #1
+
+DROP VIEW IF EXISTS Payment_by_Patient_Condition;
+CREATE INDEX index_patient_condition
+ON PatientHospitalSpecialtyFact(PatientCondition);
+
+CREATE VIEW Payment_by_Patient_Condition AS 
+SELECT Hospital_Id, PatientsPayment, PatientCondition
+FROM PatientHospitalSpecialtyFact
+GROUP BY Hospital_Id, Patient_Id;
+
+SELECT * FROM Payment_by_Patient_Condition;
+
+-- Assume that patient condition is risk level
+
+-- #5
+-- The Avg number of visits to a hospital per patient per year, qtr, and month
+-- and year over year comparison by a facility of similar size
+
+-- All hospitals
+SELECT DISTINCT count(*) Appointment_Date FROM PatientHospitalInsuranceFact
+WHERE Year(Appointment_Date) like '%2010%';
+-- Repeat this query above 4 times for each year
+-- 12,131 appointments total in 2010
+-- 12,248 appointments total in 2011
+-- 12,121 appointments total in 2012
+-- 12,197 appointments total in 2013
+-- = 48,697 Total Appointments from 2010-2013
+-- = 215 Hospitals Total
+
+-- On Average, there were about 226.50 Visits Per Hospital Per Year (46,697/215)
+-- 12,131/215 = on average 56.42 appointments per hospital in 2010
+-- 12,248/215 = on average 56.96 appointments per hospital in 2011
+-- 12,121/215 = on average 56.38 appointments per hospital in 2012
+-- 12,197/215 = on average 56.73 appointments per hospital in 2013
+
+-- Hospital #1 for comparison
+SELECT DISTINCT count(*) Appointment_Date FROM PatientHospitalInsuranceFact
+WHERE Year(Appointment_Date) like '%2010%' and Hospital_Id='H866008170';
+-- Repeat this query above 4 times for each year
+-- 50 Appointments(Patients) Total In 2010 for Hospital H866008170
+-- 47 Appointments(Patients) Total In 2011 for Hospital H866008170
+-- 69 Appointments(Patients) Total In 2012 for Hospital H866008170
+-- 62 Appointments(Patients) Total In 2013 for Hospital H866008170
+
+-- 56.42/50= 1.13 which is the average number of visits per patient per year for 2010
+-- 56.96/47= 1.21 which is the average number of visits per patient per year for 2011
+-- 56.38/69= 0.82 which is the average number of visits per patient per year for 2012
+-- 56.73/62= 0.92 which is the average number of visits per patient per year for 2013
+SELECT Patient_Id, Hospital_Id, YEAR(AppointmentDate) as Year, 1.13 as AvgVisitsYearly,
+ COUNT(AppointmentDate)/12 AS AvgVisitsMonthly, COUNT(AppointmentDate)/4 AS AvgVisitsQuarterly
+FROM PatientHospitalSpecialtyFact
+WHERE Hospital_Id='H866008170' and AppointmentDate like '%2011%'
+GROUP BY YEAR(AppointmentDate), Patient_Id;
+-- Repeat this query above 4 times for each year
+
+
+-- Hospital #2 for comparison
+SELECT DISTINCT count(*) Appointment_Date FROM PatientHospitalInsuranceFact
+WHERE Year(Appointment_Date) like '%2010%' and Hospital_Id='H866008122';
+-- Repeat this query above 4 times for each year
+-- 64 Appointments(Patients) Total in 2010 for Hospital H866008122
+-- 53 Appointments(Patients) Total in 2011 for Hospital H866008122
+-- 59 Appointments(Patients) Total in 2012 for Hospital H866008122
+-- 40 Appointments(Patients) Total in 2011 for Hospital H866008122
+
+-- 56.42/64= 0.88 which is the average number of visits per patient per year for 2010
+-- 56.96/53= 1.08 which is the average number of visits per patient per year for 2011
+-- 56.38/59= 0.95 which is the average number of visits per patient per year for 2012
+-- 56.73/40= 1.42 which is the average number of visits per patient per year for 2013
+
+
+SELECT  Patient_Id, Hospital_Id, YEAR(AppointmentDate) as Year, 0.88 as AvgVisitsYearly, COUNT(AppointmentDate)/12 
+AS AvgVisitsMonthly, COUNT(AppointmentDate)/4 AS AvgVisitsQuarterly
+FROM PatientHospitalSpecialtyFact
+WHERE Hospital_Id='H866008122' and AppointmentDate like '%2011%'
+GROUP BY YEAR(AppointmentDate), Patient_Id;
+-- Repeat this wquery above 4 times for each year
+
+-- #6
+-- Total Revenue by a facility with by month, quarter and year comparison of the 
+-- current month to the prior year same month
+
+
+SELECT DISTINCT(Hospital_Id), HospitalsRevenue, YEAR(AppointmentDate) AS YEAR, MONTH(AppointmentDate) as MONTH, 
+QUARTER(AppointmentDate) as QUARTER
+FROM PatientHospitalSpecialtyFact;
+
+
+-- #7
+-- The number of times patients have been readmitted and the avg number of readmissions
+-- per facility
+
+-- The number of times patients have been readmitted
+Select Patient_Id, COUNT(Appointment_Date)-1 as Number_of_Readmissions
+FROM PatientHospitalInsuranceFact
+GROUP BY Patient_Id;
+
+-- This is assuming that the next appointment after having one appointment is a 
+-- readmission. So if a patient has 25 total appointments, they have been readmitted 24 times.
+
+-- The average number of readmissions per facility
+Select Hospital_Id, COUNT(Appointment_Date)-1 as Number_of_Readmissions_PerHospital
+FROM PatientHospitalInsuranceFact
+GROUP BY Hospital_Id;
+-- In total, across all hospitals, there are 48,482 readmissions 
+-- (I exported the output from the above query and summed the count of readmissions for all hospitals)
+-- In total, there are 215 hospitals
+SELECT 48482/count(Hospital_Id) as Average_Number_of_Readmissions_PerFacility
+FROM HospitalDimension;
+
+-- #8
+-- Admissions per facility by month, qtr, and years and trending over time
+
+SELECT Hospital_Id, COUNT(AppointmentDate) as Number_of_Admissions, YEAR(AppointmentDate) as 
+Year, MONTH(AppointmentDate) as Month, QUARTER(AppointmentDate) as Quarter
+FROM PatientHospitalSpecialtyFact
+GROUP BY Hospital_Id;
+
+
+-- #9
+-- Avg number of illnesses per patient by month, quarter, and year
+CREATE INDEX index_date
+ON PatientIllnessFact(Appointment_Date);
+
+SELECT Patient_Id, YEAR(Appointment_Date) as Year, COUNT(Patient_Id) as YearlyTotal, 
+COUNT(Illness_Id)/12 as AvgMonthly, COUNT(Illness_Id)/4 as AvgQuarter
+FROM PatientIllnessFact
+WHERE Year(Appointment_Date) like '%2010%'
+GROUP BY 1;
+
+-- #10
+-- Identify which patients are seen by the type of insurance at a hospital, and compare
+-- how it has changed over time
+
+CREATE INDEX index_insurance_type
+ON PatientHospitalInsuranceFact(TypeofInsurance);
+SELECT  Hospital_Id, TypeofInsurance, Patient_Id,  Year(Appointment_Date) as Year
+FROM PatientHospitalInsuranceFact
+GROUP BY YEAR(Appointment_Date), Patient_Id;
+
+
+-- #11
+-- Identify which patients are most likely in need of an appointment based on any patient
+-- that has not had an appointment within the last 12-month period
+
+Select a.Patient_Id, a.Hospital_Id, b.Name,
+CASE WHEN DATEDIFF('2014-06-01', a.AppointmentDate) < 365 THEN 'No' ELSE 'Yes' END AS 'PatientNeedsAppointment'  
+FROM PatientHospitalSpecialtyFact as a INNER JOIN HospitalDimension as b ON a.Hospital_Id=b.Hospital_Id;
+
+-- We assume that 06/01/2014 starts the last 12 month period
+
+
+-- #12
+-- Define the average length of time in days between the day a patient makes an appt
+-- and when the patient is seen for a new patient physical, routine exam, or return
+-- visit exam
+
+SELECT a.Patient_Id, a.Hospital_Id, a.Appointment_Date, (SELECT MIN(Appointment_Date) 
+FROM PatientHospitalInsuranceFact AS c WHERE c.Appointment_Date > a.Appointment_Date
+AND c.Patient_Id=a.Patient_Id AND c.Hospital_Id!=a.Hospital_Id) as PatientsNextAppointment, 
+DATEDIFF((SELECT MIN(Appointment_Date) FROM PatientHospitalInsuranceFact 
+AS c WHERE c.Appointment_Date > a.Appointment_Date
+AND c.Patient_Id=a.Patient_Id AND c.Hospital_Id!=a.Hospital_Id), Appointment_Date) 
+AS DifferenceinDays FROM PatientHospitalInsuranceFact AS a
+GROUP BY Patient_Id, 3;
+-- The average length of time between the day a patient makes 
+-- an appointment and when the patients returns for their next appointment is 63.86 Days for all patients in all hospitals 
+
+
+
+
+
+
